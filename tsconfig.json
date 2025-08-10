@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "allowUnreachableCode": false,
+    "declaration": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["es2021", "dom"],
+    "module": "esnext",
+    "moduleResolution": "node",
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "outDir": "dist/esm",
+    "pretty": true,
+    "removeComments": false,
+    "rootDir": "src",
+    "sourceMap": true,
+    "strict": true,
+    "target": "es2021"
+  },
+  "exclude": ["node_modules"],
+  "include": ["src/**/*.ts"]
+}
