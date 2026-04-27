@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "CapacitorStreamHttp",
+    name: "CapacitorStreamHttpV2",
     platforms: [.iOS(.v13)],
     products: [
         .library(
-            name: "CapacitorStreamHttp",
+            name: "CapacitorStreamHttpV2",
             targets: ["StreamHttpPlugin"])
     ],
     dependencies: [

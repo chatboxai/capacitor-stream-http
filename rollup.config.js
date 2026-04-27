@@ -4,7 +4,7 @@ export default {
     {
       file: 'dist/plugin.js',
       format: 'iife',
-      name: 'capacitorStreamHttp',
+      name: 'CapacitorStreamHttpV2',
       globals: {
         '@capacitor/core': 'capacitorExports',
       },

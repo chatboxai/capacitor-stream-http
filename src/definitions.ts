@@ -24,14 +24,14 @@ export interface StreamHttpPlugin {
    * @returns Promise with stream ID
    */
   startStream(options: StartStreamOptions): Promise<{ id: string }>;
-  
+
   /**
    * Cancel an active stream
    * @param options Object containing the stream ID to cancel
    * @returns Promise that resolves when stream is cancelled
    */
   cancelStream(options: { id: string }): Promise<void>;
-  
+
   /**
    * Add a listener for stream events
    * @param eventName The event to listen for (chunk, end, or error)
@@ -40,6 +40,6 @@ export interface StreamHttpPlugin {
    */
   addListener(
     eventName: 'chunk' | 'end' | 'error',
-    listenerFunc: (data: { id: string; chunk?: string; error?: string }) => void
+    listenerFunc: (data: { id: string; chunk?: string; error?: string }) => void,
   ): Promise<{ remove: () => void }>;
 }
