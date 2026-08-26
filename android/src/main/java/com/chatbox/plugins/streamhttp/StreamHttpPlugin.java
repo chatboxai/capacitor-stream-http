@@ -13,9 +13,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.HashMap;
 import java.util.Iterator;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -25,8 +23,7 @@ import android.util.Log;
 @CapacitorPlugin(name = "StreamHttp")
 public class StreamHttpPlugin extends Plugin {
     private static final String TAG = "StreamHttpPlugin";
-    private final Map<String, HttpURLConnection> activeConnections = new HashMap<>();
-    private final Map<String, Thread> activeThreads = new HashMap<>();
+    private final StreamRequestRegistry activeRequests = new StreamRequestRegistry();
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     @PluginMethod
@@ -42,16 +39,18 @@ public class StreamHttpPlugin extends Plugin {
         }
 
         String streamId = UUID.randomUUID().toString();
+        StreamRequestRegistry.Request request = activeRequests.register(streamId);
         
         executor.execute(() -> {
             try {
+                if (!request.registerWorker(Thread.currentThread())) {
+                    return;
+                }
+
                 URL url = new URL(urlString);
-                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-                
-                // Store connection for potential cancellation
-                synchronized (activeConnections) {
-                    activeConnections.put(streamId, connection);
-                    activeThreads.put(streamId, Thread.currentThread());
+                HttpURLConnection connection = request.openConnection(url);
+                if (connection == null) {
+                    return;
                 }
 
                 // Set request method
@@ -67,25 +66,37 @@ public class StreamHttpPlugin extends Plugin {
                     }
                 }
 
-                // Set timeouts
-                connection.setConnectTimeout(30000); // 30 seconds
-                connection.setReadTimeout(30000); // 30 seconds
-                
                 // Enable streaming mode for better performance
                 connection.setChunkedStreamingMode(0);
-                
+
                 // Write body if present
-                if (body != null && !body.isEmpty() && !method.equals("GET")) {
+                boolean hasRequestBody = body != null && !body.isEmpty() && !method.equals("GET");
+                if (hasRequestBody) {
                     connection.setDoOutput(true);
+                }
+
+                if (!request.connect(connection)) {
+                    return;
+                }
+
+                if (hasRequestBody) {
                     try (OutputStream os = connection.getOutputStream()) {
                         byte[] input = body.getBytes("utf-8");
                         os.write(input, 0, input.length);
                     }
                 }
 
+                if (request.isCancelled()) {
+                    return;
+                }
+
                 // Get response code
                 int responseCode = connection.getResponseCode();
                 Log.d(TAG, "Response code: " + responseCode);
+
+                if (request.isCancelled()) {
+                    return;
+                }
 
                 // Read response stream
                 InputStream inputStream;
@@ -102,7 +113,7 @@ public class StreamHttpPlugin extends Plugin {
                     
                     while ((line = reader.readLine()) != null) {
                         // Check if stream was cancelled
-                        if (!activeConnections.containsKey(streamId)) {
+                        if (request.isCancelled()) {
                             break;
                         }
                         
@@ -113,8 +124,15 @@ public class StreamHttpPlugin extends Plugin {
                             JSObject chunkData = new JSObject();
                             chunkData.put("id", streamId);
                             chunkData.put("chunk", event);
-                            notifyListeners("chunk", chunkData);
+                            if (!request.runIfActive(() -> notifyListeners("chunk", chunkData))) {
+                                break;
+                            }
                         }
+                    }
+
+                    reader.close();
+                    if (request.isCancelled()) {
+                        return;
                     }
                     
                     // Process empty line at the end to flush last event
@@ -123,7 +141,9 @@ public class StreamHttpPlugin extends Plugin {
                         JSObject chunkData = new JSObject();
                         chunkData.put("id", streamId);
                         chunkData.put("chunk", lastEvent);
-                        notifyListeners("chunk", chunkData);
+                        if (!request.runIfActive(() -> notifyListeners("chunk", chunkData))) {
+                            return;
+                        }
                     }
                     
                     // Send any remaining data
@@ -132,34 +152,30 @@ public class StreamHttpPlugin extends Plugin {
                         JSObject chunkData = new JSObject();
                         chunkData.put("id", streamId);
                         chunkData.put("chunk", remaining);
-                        notifyListeners("chunk", chunkData);
+                        if (!request.runIfActive(() -> notifyListeners("chunk", chunkData))) {
+                            return;
+                        }
                     }
-                    
-                    reader.close();
                 }
 
                 // Send end event
                 JSObject endData = new JSObject();
                 endData.put("id", streamId);
-                notifyListeners("end", endData);
+                request.runIfActive(() -> notifyListeners("end", endData));
 
             } catch (IOException e) {
+                if (request.isCancelled()) {
+                    return;
+                }
                 Log.e(TAG, "Stream error: " + e.getMessage(), e);
                 
                 // Send error event
                 JSObject errorData = new JSObject();
                 errorData.put("id", streamId);
                 errorData.put("error", e.getMessage());
-                notifyListeners("error", errorData);
+                request.runIfActive(() -> notifyListeners("error", errorData));
             } finally {
-                // Clean up
-                synchronized (activeConnections) {
-                    HttpURLConnection connection = activeConnections.remove(streamId);
-                    if (connection != null) {
-                        connection.disconnect();
-                    }
-                    activeThreads.remove(streamId);
-                }
+                activeRequests.complete(streamId, request);
             }
         });
 
@@ -178,38 +194,14 @@ public class StreamHttpPlugin extends Plugin {
             return;
         }
 
-        synchronized (activeConnections) {
-            // Cancel the connection
-            HttpURLConnection connection = activeConnections.remove(streamId);
-            if (connection != null) {
-                connection.disconnect();
-            }
-            
-            // Interrupt the thread if it's still running
-            Thread thread = activeThreads.remove(streamId);
-            if (thread != null) {
-                thread.interrupt();
-            }
-        }
+        activeRequests.cancel(streamId);
 
         call.resolve();
     }
     
     @Override
     protected void handleOnDestroy() {
-        // Clean up all active connections when plugin is destroyed
-        synchronized (activeConnections) {
-            for (HttpURLConnection connection : activeConnections.values()) {
-                connection.disconnect();
-            }
-            activeConnections.clear();
-            
-            for (Thread thread : activeThreads.values()) {
-                thread.interrupt();
-            }
-            activeThreads.clear();
-        }
-        
+        activeRequests.cancelAll();
         executor.shutdown();
         super.handleOnDestroy();
     }
