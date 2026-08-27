@@ -1,11 +1,11 @@
 package com.chatbox.plugins.streamhttp;
 
+import android.util.Log;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,10 +18,9 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import android.util.Log;
-
 @CapacitorPlugin(name = "StreamHttp")
 public class StreamHttpPlugin extends Plugin {
+
     private static final String TAG = "StreamHttpPlugin";
     private final StreamRequestRegistry activeRequests = new StreamRequestRegistry();
     private final ExecutorService executor = Executors.newCachedThreadPool();
@@ -38,9 +37,21 @@ public class StreamHttpPlugin extends Plugin {
             return;
         }
 
+        int connectTimeoutMillis;
+        try {
+            JSObject callData = call.getData();
+            connectTimeoutMillis = HttpConnectionConfig.resolveConnectTimeoutMillis(
+                callData.has("connectTimeoutMillis"),
+                callData.opt("connectTimeoutMillis")
+            );
+        } catch (IllegalArgumentException error) {
+            call.reject(error.getMessage());
+            return;
+        }
+
         String streamId = UUID.randomUUID().toString();
         StreamRequestRegistry.Request request = activeRequests.register(streamId);
-        
+
         executor.execute(() -> {
             try {
                 if (!request.registerWorker(Thread.currentThread())) {
@@ -48,14 +59,14 @@ public class StreamHttpPlugin extends Plugin {
                 }
 
                 URL url = new URL(urlString);
-                HttpURLConnection connection = request.openConnection(url);
+                HttpURLConnection connection = request.openConnection(url, connectTimeoutMillis);
                 if (connection == null) {
                     return;
                 }
 
                 // Set request method
                 connection.setRequestMethod(method);
-                
+
                 // Set headers
                 Iterator<String> keys = headers.keys();
                 while (keys.hasNext()) {
@@ -110,13 +121,13 @@ public class StreamHttpPlugin extends Plugin {
                     BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "utf-8"));
                     SSEParser sseParser = new SSEParser();
                     String line;
-                    
+
                     while ((line = reader.readLine()) != null) {
                         // Check if stream was cancelled
                         if (request.isCancelled()) {
                             break;
                         }
-                        
+
                         // Process line through SSE parser
                         String event = sseParser.processLine(line);
                         if (event != null) {
@@ -134,7 +145,7 @@ public class StreamHttpPlugin extends Plugin {
                     if (request.isCancelled()) {
                         return;
                     }
-                    
+
                     // Process empty line at the end to flush last event
                     String lastEvent = sseParser.processLine("");
                     if (lastEvent != null) {
@@ -145,7 +156,7 @@ public class StreamHttpPlugin extends Plugin {
                             return;
                         }
                     }
-                    
+
                     // Send any remaining data
                     String remaining = sseParser.flush();
                     if (remaining != null && !remaining.isEmpty()) {
@@ -162,13 +173,12 @@ public class StreamHttpPlugin extends Plugin {
                 JSObject endData = new JSObject();
                 endData.put("id", streamId);
                 request.runIfActive(() -> notifyListeners("end", endData));
-
             } catch (IOException e) {
                 if (request.isCancelled()) {
                     return;
                 }
                 Log.e(TAG, "Stream error: " + e.getMessage(), e);
-                
+
                 // Send error event
                 JSObject errorData = new JSObject();
                 errorData.put("id", streamId);
@@ -188,7 +198,7 @@ public class StreamHttpPlugin extends Plugin {
     @PluginMethod
     public void cancelStream(PluginCall call) {
         String streamId = call.getString("id");
-        
+
         if (streamId == null) {
             call.reject("Stream ID is required");
             return;
@@ -198,7 +208,7 @@ public class StreamHttpPlugin extends Plugin {
 
         call.resolve();
     }
-    
+
     @Override
     protected void handleOnDestroy() {
         activeRequests.cancelAll();

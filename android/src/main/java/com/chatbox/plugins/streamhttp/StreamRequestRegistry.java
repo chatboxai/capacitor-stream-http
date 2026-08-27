@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 final class StreamRequestRegistry {
+
     private final Map<String, Request> requests = new HashMap<>();
 
     synchronized Request register(String streamId) {
@@ -48,6 +49,7 @@ final class StreamRequestRegistry {
     }
 
     static final class Request {
+
         private boolean cancelled;
         private HttpURLConnection connection;
         private Thread workerThread;
@@ -60,14 +62,14 @@ final class StreamRequestRegistry {
             return true;
         }
 
-        HttpURLConnection openConnection(URL url) throws IOException {
+        HttpURLConnection openConnection(URL url, int connectTimeoutMillis) throws IOException {
             synchronized (this) {
                 if (cancelled) {
                     return null;
                 }
             }
 
-            HttpURLConnection openedConnection = HttpConnectionConfig.openForStreaming(url);
+            HttpURLConnection openedConnection = HttpConnectionConfig.openForStreaming(url, connectTimeoutMillis);
             synchronized (this) {
                 if (cancelled) {
                     openedConnection.disconnect();

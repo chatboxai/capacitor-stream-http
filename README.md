@@ -46,9 +46,9 @@ const { id } = await StreamHttp.startStream({
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'Authorization': 'Bearer token'
+    Authorization: 'Bearer token',
   },
-  body: JSON.stringify({ query: 'Hello' })
+  body: JSON.stringify({ query: 'Hello' }),
 });
 
 // Cancel stream if needed
@@ -64,9 +64,9 @@ const stream = createNativeReadableStream({
   url: 'https://api.example.com/stream',
   method: 'POST',
   headers: {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
   },
-  body: JSON.stringify({ data: 'test' })
+  body: JSON.stringify({ data: 'test' }),
 });
 
 const reader = stream.getReader();
@@ -75,7 +75,7 @@ const decoder = new TextDecoder();
 while (true) {
   const { done, value } = await reader.read();
   if (done) break;
-  
+
   const chunk = decoder.decode(value);
   console.log('Chunk:', chunk);
 }
@@ -88,10 +88,12 @@ while (true) {
 Starts a new HTTP stream request.
 
 **Parameters:**
+
 - `url` (string): The URL to request
 - `method` (string): HTTP method (GET, POST, etc.)
 - `headers` (object): Optional request headers
 - `body` (string): Optional request body
+- `connectTimeoutMillis` (non-negative integer): Optional Android connection timeout in milliseconds. Defaults to 90000; set to 0 to disable the connect timeout.
 
 **Returns:** Promise<{ id: string }> - The stream ID
 
@@ -100,6 +102,7 @@ Starts a new HTTP stream request.
 Cancels an active stream.
 
 **Parameters:**
+
 - `id` (string): The stream ID to cancel
 
 ### Events
@@ -107,10 +110,8 @@ Cancels an active stream.
 - `chunk`: Fired when a data chunk is received
   - `id` (string): Stream ID
   - `chunk` (string): The data chunk
-  
 - `end`: Fired when the stream ends
   - `id` (string): Stream ID
-  
 - `error`: Fired on stream error
   - `id` (string): Stream ID
   - `error` (string): Error message
@@ -124,11 +125,13 @@ Cancels an active stream.
 ## Implementation Details
 
 ### iOS
+
 - Uses `URLSession` with delegate for streaming
 - Supports HTTP/2 and HTTP/3
 - Automatic retry and connection management
 
 ### Android
+
 - Uses `HttpURLConnection` with chunked streaming mode
 - SSE-aware parsing for proper event boundaries
 - Thread-safe connection management

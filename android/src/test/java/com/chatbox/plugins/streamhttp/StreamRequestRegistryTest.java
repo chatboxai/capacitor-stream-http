@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
@@ -20,19 +21,57 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
 
 public class StreamRequestRegistryTest {
+
     @Test
-    public void opensProductionConnectionsWithStreamingTimeouts() throws Exception {
+    public void resolvesConnectTimeoutOptions() {
+        assertEquals(90_000, HttpConnectionConfig.resolveConnectTimeoutMillis(false, null));
+        assertEquals(0, HttpConnectionConfig.resolveConnectTimeoutMillis(true, 0));
+        assertEquals(120_000, HttpConnectionConfig.resolveConnectTimeoutMillis(true, 120_000));
+    }
+
+    @Test
+    public void rejectsInvalidConnectTimeoutOptions() {
+        assertThrows(IllegalArgumentException.class, () -> HttpConnectionConfig.resolveConnectTimeoutMillis(true, -1));
+        assertThrows(IllegalArgumentException.class, () -> HttpConnectionConfig.resolveConnectTimeoutMillis(true, 1_500.5));
+        assertThrows(IllegalArgumentException.class, () -> HttpConnectionConfig.resolveConnectTimeoutMillis(true, "90000"));
+        assertThrows(IllegalArgumentException.class, () ->
+            HttpConnectionConfig.resolveConnectTimeoutMillis(true, (long) Integer.MAX_VALUE + 1)
+        );
+    }
+
+    @Test
+    public void opensProductionConnectionsWithDefaultStreamingTimeouts() throws Exception {
         StreamRequestRegistry registry = new StreamRequestRegistry();
         StreamRequestRegistry.Request request = registry.register("stream");
         TestHttpURLConnection expectedConnection = new TestHttpURLConnection();
 
         assertTrue(request.registerWorker(Thread.currentThread()));
-        HttpURLConnection connection = request.openConnection(urlFor(expectedConnection, new AtomicInteger()));
+        HttpURLConnection connection = request.openConnection(
+            urlFor(expectedConnection, new AtomicInteger()),
+            HttpConnectionConfig.DEFAULT_CONNECT_TIMEOUT_MILLIS
+        );
 
         assertSame(expectedConnection, connection);
-        assertEquals(30_000, connection.getConnectTimeout());
+        assertEquals(90_000, connection.getConnectTimeout());
         assertEquals(0, connection.getReadTimeout());
         assertTrue(request.connect(connection));
+
+        registry.complete("stream", request);
+        assertTrue(expectedConnection.isDisconnected());
+    }
+
+    @Test
+    public void usesCallerProvidedConnectTimeout() throws Exception {
+        StreamRequestRegistry registry = new StreamRequestRegistry();
+        StreamRequestRegistry.Request request = registry.register("stream");
+        TestHttpURLConnection expectedConnection = new TestHttpURLConnection();
+
+        assertTrue(request.registerWorker(Thread.currentThread()));
+        HttpURLConnection connection = request.openConnection(urlFor(expectedConnection, new AtomicInteger()), 120_000);
+
+        assertSame(expectedConnection, connection);
+        assertEquals(120_000, connection.getConnectTimeout());
+        assertEquals(0, connection.getReadTimeout());
 
         registry.complete("stream", request);
         assertTrue(expectedConnection.isDisconnected());
@@ -48,7 +87,9 @@ public class StreamRequestRegistryTest {
 
         assertFalse(registry.cancel("stream"));
         assertFalse(request.registerWorker(Thread.currentThread()));
-        assertNull(request.openConnection(urlFor(new TestHttpURLConnection(), openCount)));
+        assertNull(
+            request.openConnection(urlFor(new TestHttpURLConnection(), openCount), HttpConnectionConfig.DEFAULT_CONNECT_TIMEOUT_MILLIS)
+        );
         assertEquals(0, openCount.get());
 
         registry.complete("stream", request);
@@ -62,7 +103,10 @@ public class StreamRequestRegistryTest {
         IgnoringEarlyDisconnectHttpURLConnection connection = new IgnoringEarlyDisconnectHttpURLConnection();
 
         assertTrue(request.registerWorker(new Thread()));
-        assertSame(connection, request.openConnection(urlFor(connection, new AtomicInteger())));
+        assertSame(
+            connection,
+            request.openConnection(urlFor(connection, new AtomicInteger()), HttpConnectionConfig.DEFAULT_CONNECT_TIMEOUT_MILLIS)
+        );
 
         assertTrue(registry.cancel("stream"));
 
@@ -97,7 +141,10 @@ public class StreamRequestRegistryTest {
                 if (!request.registerWorker(Thread.currentThread())) {
                     throw new AssertionError("worker registration was cancelled");
                 }
-                HttpURLConnection openedConnection = request.openConnection(urlFor(connection, new AtomicInteger()));
+                HttpURLConnection openedConnection = request.openConnection(
+                    urlFor(connection, new AtomicInteger()),
+                    HttpConnectionConfig.DEFAULT_CONNECT_TIMEOUT_MILLIS
+                );
                 if (openedConnection == null) {
                     throw new AssertionError("connection was cancelled before opening");
                 }
@@ -115,7 +162,7 @@ public class StreamRequestRegistryTest {
 
         worker.start();
         assertTrue(connection.awaitConnectStarted());
-        assertEquals(30_000, connection.getConnectTimeout());
+        assertEquals(90_000, connection.getConnectTimeout());
 
         assertTrue(registry.cancel("stream"));
         assertFalse(connection.isDisconnected());
@@ -140,7 +187,10 @@ public class StreamRequestRegistryTest {
                 if (!request.registerWorker(Thread.currentThread())) {
                     throw new AssertionError("worker registration was cancelled");
                 }
-                HttpURLConnection openedConnection = request.openConnection(urlFor(connection, new AtomicInteger()));
+                HttpURLConnection openedConnection = request.openConnection(
+                    urlFor(connection, new AtomicInteger()),
+                    HttpConnectionConfig.DEFAULT_CONNECT_TIMEOUT_MILLIS
+                );
                 if (openedConnection == null) {
                     throw new AssertionError("connection was cancelled before opening");
                 }
@@ -171,16 +221,21 @@ public class StreamRequestRegistryTest {
     }
 
     private static URL urlFor(HttpURLConnection connection, AtomicInteger openCount) throws IOException {
-        return new URL(null, "test://stream", new URLStreamHandler() {
-            @Override
-            protected URLConnection openConnection(URL ignored) {
-                openCount.incrementAndGet();
-                return connection;
+        return new URL(
+            null,
+            "test://stream",
+            new URLStreamHandler() {
+                @Override
+                protected URLConnection openConnection(URL ignored) {
+                    openCount.incrementAndGet();
+                    return connection;
+                }
             }
-        });
+        );
     }
 
     private static class TestHttpURLConnection extends HttpURLConnection {
+
         private final AtomicBoolean connected = new AtomicBoolean();
         private final AtomicBoolean disconnected = new AtomicBoolean();
         private final AtomicInteger connectCount = new AtomicInteger();
@@ -224,6 +279,7 @@ public class StreamRequestRegistryTest {
     }
 
     private static class IgnoringEarlyDisconnectHttpURLConnection extends TestHttpURLConnection {
+
         private IgnoringEarlyDisconnectHttpURLConnection() throws IOException {}
 
         @Override
@@ -235,6 +291,7 @@ public class StreamRequestRegistryTest {
     }
 
     private static final class BlockingConnectHttpURLConnection extends IgnoringEarlyDisconnectHttpURLConnection {
+
         private final CountDownLatch connectStarted = new CountDownLatch(1);
         private final CountDownLatch finishConnect = new CountDownLatch(1);
 
@@ -268,6 +325,7 @@ public class StreamRequestRegistryTest {
     }
 
     private static final class BlockingHttpURLConnection extends TestHttpURLConnection {
+
         private final CountDownLatch readStarted = new CountDownLatch(1);
         private final CountDownLatch disconnected = new CountDownLatch(1);
 
