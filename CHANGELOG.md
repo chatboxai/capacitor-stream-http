@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-08-27
+
+### Fixed
+
+- Allowed Android SSE streams to remain idle between chunks without triggering a read timeout.
+- Increased the default Android connection timeout to 90 seconds and added the optional `connectTimeoutMillis` request setting.
+- Made Android stream cancellation safe while a connection is being established.
+
 ## [0.1.0] - 2025-12-02
 
 ### Breaking Changes
