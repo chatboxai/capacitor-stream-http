@@ -7,6 +7,7 @@ Capacitor plugin for native HTTP streaming support on iOS and Android. This plug
 - ✅ True HTTP streaming support (not buffered)
 - ✅ Server-Sent Events (SSE) support
 - ✅ Proper chunk-by-chunk data delivery
+- ✅ HTTP response status and headers
 - ✅ Request cancellation support
 - ✅ Custom headers and request body
 - ✅ Works with proxied requests on mobile
@@ -24,6 +25,12 @@ npx cap sync
 
 ```typescript
 import { StreamHttp } from 'capacitor-stream-http';
+
+// Listen for response metadata. This fires before the first body chunk.
+await StreamHttp.addListener('response', (data) => {
+  console.log('Response status:', data.status);
+  console.log('Response headers:', data.headers);
+});
 
 // Listen for chunks
 await StreamHttp.addListener('chunk', (data) => {
@@ -107,6 +114,10 @@ Cancels an active stream.
 
 ### Events
 
+- `response`: Fired after response headers are received and before the first body chunk, including for non-2xx responses
+  - `id` (string): Stream ID
+  - `status` (number): HTTP response status code
+  - `headers` (object): Response headers with lowercase names; repeated values are comma-separated
 - `chunk`: Fired when a data chunk is received
   - `id` (string): Stream ID
   - `chunk` (string): The data chunk
@@ -127,12 +138,14 @@ Cancels an active stream.
 ### iOS
 
 - Uses `URLSession` with delegate for streaming
+- Streams response bodies for both successful and non-2xx status codes
 - Supports HTTP/2 and HTTP/3
 - Automatic retry and connection management
 
 ### Android
 
 - Uses `HttpURLConnection` with chunked streaming mode
+- Streams response bodies for both successful and non-2xx status codes
 - SSE-aware parsing for proper event boundaries
 - Thread-safe connection management
 

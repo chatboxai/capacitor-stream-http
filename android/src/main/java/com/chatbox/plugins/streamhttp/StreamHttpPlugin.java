@@ -6,14 +6,12 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -101,78 +99,7 @@ public class StreamHttpPlugin extends Plugin {
                     return;
                 }
 
-                // Get response code
-                int responseCode = connection.getResponseCode();
-                Log.d(TAG, "Response code: " + responseCode);
-
-                if (request.isCancelled()) {
-                    return;
-                }
-
-                // Read response stream
-                InputStream inputStream;
-                if (responseCode >= 200 && responseCode < 300) {
-                    inputStream = connection.getInputStream();
-                } else {
-                    inputStream = connection.getErrorStream();
-                }
-
-                if (inputStream != null) {
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "utf-8"));
-                    SSEParser sseParser = new SSEParser();
-                    String line;
-
-                    while ((line = reader.readLine()) != null) {
-                        // Check if stream was cancelled
-                        if (request.isCancelled()) {
-                            break;
-                        }
-
-                        // Process line through SSE parser
-                        String event = sseParser.processLine(line);
-                        if (event != null) {
-                            // Complete SSE event ready, send it
-                            JSObject chunkData = new JSObject();
-                            chunkData.put("id", streamId);
-                            chunkData.put("chunk", event);
-                            if (!request.runIfActive(() -> notifyListeners("chunk", chunkData))) {
-                                break;
-                            }
-                        }
-                    }
-
-                    reader.close();
-                    if (request.isCancelled()) {
-                        return;
-                    }
-
-                    // Process empty line at the end to flush last event
-                    String lastEvent = sseParser.processLine("");
-                    if (lastEvent != null) {
-                        JSObject chunkData = new JSObject();
-                        chunkData.put("id", streamId);
-                        chunkData.put("chunk", lastEvent);
-                        if (!request.runIfActive(() -> notifyListeners("chunk", chunkData))) {
-                            return;
-                        }
-                    }
-
-                    // Send any remaining data
-                    String remaining = sseParser.flush();
-                    if (remaining != null && !remaining.isEmpty()) {
-                        JSObject chunkData = new JSObject();
-                        chunkData.put("id", streamId);
-                        chunkData.put("chunk", remaining);
-                        if (!request.runIfActive(() -> notifyListeners("chunk", chunkData))) {
-                            return;
-                        }
-                    }
-                }
-
-                // Send end event
-                JSObject endData = new JSObject();
-                endData.put("id", streamId);
-                request.runIfActive(() -> notifyListeners("end", endData));
+                StreamResponsePipeline.consume(streamId, connection, request::isCancelled, eventSink(request));
             } catch (IOException e) {
                 if (request.isCancelled()) {
                     return;
@@ -207,6 +134,38 @@ public class StreamHttpPlugin extends Plugin {
         activeRequests.cancel(streamId);
 
         call.resolve();
+    }
+
+    StreamResponsePipeline.EventSink eventSink(StreamRequestRegistry.Request request) {
+        return new StreamResponsePipeline.EventSink() {
+            @Override
+            public boolean onResponse(String streamId, int status, Map<String, String> headers) {
+                JSObject responseHeaders = new JSObject();
+                for (Map.Entry<String, String> header : headers.entrySet()) {
+                    responseHeaders.put(header.getKey(), header.getValue());
+                }
+                JSObject data = new JSObject();
+                data.put("id", streamId);
+                data.put("status", status);
+                data.put("headers", responseHeaders);
+                return request.runIfActive(() -> notifyListeners("response", data));
+            }
+
+            @Override
+            public boolean onChunk(String streamId, String chunk) {
+                JSObject data = new JSObject();
+                data.put("id", streamId);
+                data.put("chunk", chunk);
+                return request.runIfActive(() -> notifyListeners("chunk", data));
+            }
+
+            @Override
+            public boolean onEnd(String streamId) {
+                JSObject data = new JSObject();
+                data.put("id", streamId);
+                return request.runIfActive(() -> notifyListeners("end", data));
+            }
+        };
     }
 
     @Override
