@@ -19,6 +19,52 @@ struct StreamResponseMetadata {
   }
 }
 
+enum StreamHttpEvent {
+  case response(id: String, status: Int, headers: [String: String])
+  case chunk(id: String, chunk: String)
+  case end(id: String)
+  case error(id: String, error: String)
+}
+
+struct StreamEventOrchestrator {
+  let notify: (String, [String: Any]) -> Void
+
+  func receiveResponse(
+    id: String,
+    response: HTTPURLResponse,
+    completionHandler: (URLSession.ResponseDisposition) -> Void
+  ) {
+    let metadata = StreamResponseMetadata(response: response)
+    emit(.response(id: id, status: metadata.status, headers: metadata.headers))
+    completionHandler(.allow)
+  }
+
+  func receiveData(id: String, data: Data) {
+    emit(.chunk(id: id, chunk: String(data: data, encoding: .utf8) ?? ""))
+  }
+
+  func complete(id: String, error: Error?) {
+    if let error {
+      emit(.error(id: id, error: error.localizedDescription))
+    } else {
+      emit(.end(id: id))
+    }
+  }
+
+  private func emit(_ event: StreamHttpEvent) {
+    switch event {
+    case .response(let id, let status, let headers):
+      notify("response", ["id": id, "status": status, "headers": headers])
+    case .chunk(let id, let chunk):
+      notify("chunk", ["id": id, "chunk": chunk])
+    case .end(let id):
+      notify("end", ["id": id])
+    case .error(let id, let error):
+      notify("error", ["id": id, "error": error])
+    }
+  }
+}
+
 @objc(StreamHttpPlugin)
 public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate {
   public let identifier = "StreamHttpPlugin"
@@ -30,6 +76,11 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
 
   private var sessions: [String: URLSession] = [:]
   private var tasks: [String: URLSessionDataTask] = [:]
+  private var streamEvents: StreamEventOrchestrator {
+    StreamEventOrchestrator(notify: { [weak self] eventName, data in
+      self?.notifyListeners(eventName, data: data)
+    })
+  }
 
   @objc public func startStream(_ call: CAPPluginCall) {
     guard let urlString = call.getString("url"), let url = URL(string: urlString) else {
@@ -75,8 +126,7 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
   public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data)
   {
     guard let id = tasks.first(where: { $0.value == dataTask })?.key else { return }
-    let chunk = String(data: data, encoding: .utf8) ?? ""
-    notifyListeners("chunk", data: ["id": id, "chunk": chunk])
+    streamEvents.receiveData(id: id, data: data)
   }
 
   public func urlSession(
@@ -93,21 +143,15 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
       return
     }
 
-    let metadata = StreamResponseMetadata(response: httpResponse)
-    notifyListeners(
-      "response", data: ["id": id, "status": metadata.status, "headers": metadata.headers])
-    completionHandler(.allow)
+    streamEvents.receiveResponse(
+      id: id, response: httpResponse, completionHandler: completionHandler)
   }
 
   public func urlSession(
     _ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?
   ) {
     guard let id = tasks.first(where: { $0.value == task })?.key else { return }
-    if let error = error {
-      notifyListeners("error", data: ["id": id, "error": error.localizedDescription])
-    } else {
-      notifyListeners("end", data: ["id": id])
-    }
+    streamEvents.complete(id: id, error: error)
     tasks.removeValue(forKey: id)
     sessions.removeValue(forKey: id)
   }

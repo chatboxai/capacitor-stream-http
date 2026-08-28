@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 - Added a `response` event with the HTTP status and response headers before body chunks on Android and iOS.
 
+### Fixed
+
+- Preserved Android response body streaming for redirects and other 3xx responses.
+
 ## [0.1.1] - 2026-08-27
 
 ### Fixed
