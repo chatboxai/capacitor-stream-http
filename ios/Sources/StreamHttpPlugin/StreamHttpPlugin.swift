@@ -74,8 +74,7 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
     CAPPluginMethod(name: "cancelStream", returnType: CAPPluginReturnPromise),
   ]
 
-  private var sessions: [String: URLSession] = [:]
-  private var tasks: [String: URLSessionDataTask] = [:]
+  private let activeStreams = StreamTaskRegistry()
   private var streamEvents: StreamEventOrchestrator {
     StreamEventOrchestrator(notify: { [weak self] eventName, data in
       self?.notifyListeners(eventName, data: data)
@@ -105,8 +104,7 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
     let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
     let task = session.dataTask(with: request)
     let id = UUID().uuidString
-    sessions[id] = session
-    tasks[id] = task
+    activeStreams.register(id: id, session: session, task: task)
     call.resolve(["id": id])
     task.resume()
   }
@@ -116,16 +114,16 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
       call.reject("Missing id")
       return
     }
-    tasks[id]?.cancel()
-    sessions[id]?.invalidateAndCancel()
-    tasks.removeValue(forKey: id)
-    sessions.removeValue(forKey: id)
+    if let removed = activeStreams.remove(id: id) {
+      removed.task.cancel()
+      removed.session.invalidateAndCancel()
+    }
     call.resolve()
   }
 
   public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data)
   {
-    guard let id = tasks.first(where: { $0.value == dataTask })?.key else { return }
+    guard let id = activeStreams.id(for: dataTask) else { return }
     streamEvents.receiveData(id: id, data: data)
   }
 
@@ -136,10 +134,11 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
     completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
   ) {
     guard
-      let id = tasks.first(where: { $0.value == dataTask })?.key,
+      let id = activeStreams.id(for: dataTask),
       let httpResponse = response as? HTTPURLResponse
     else {
-      completionHandler(.cancel)
+      // Without metadata to report, keep streaming the body as before.
+      completionHandler(.allow)
       return
     }
 
@@ -150,9 +149,8 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
   public func urlSession(
     _ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?
   ) {
-    guard let id = tasks.first(where: { $0.value == task })?.key else { return }
+    guard let id = activeStreams.id(for: task) else { return }
     streamEvents.complete(id: id, error: error)
-    tasks.removeValue(forKey: id)
-    sessions.removeValue(forKey: id)
+    activeStreams.remove(id: id)
   }
 }
