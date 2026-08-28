@@ -1,3 +1,5 @@
+import type { PluginListenerHandle } from '@capacitor/core';
+
 export interface StartStreamOptions {
   /**
    * The URL to request
@@ -22,6 +24,33 @@ export interface StartStreamOptions {
   connectTimeoutMillis?: number;
 }
 
+export interface StreamResponseEvent {
+  id: string;
+  status: number;
+  headers: Record<string, string>;
+}
+
+export interface StreamChunkEvent {
+  id: string;
+  chunk: string;
+}
+
+export interface StreamEndEvent {
+  id: string;
+}
+
+export interface StreamErrorEvent {
+  id: string;
+  error: string;
+}
+
+export interface StreamHttpEventMap {
+  response: StreamResponseEvent;
+  chunk: StreamChunkEvent;
+  end: StreamEndEvent;
+  error: StreamErrorEvent;
+}
+
 export interface StreamHttpPlugin {
   /**
    * Start a new HTTP stream request
@@ -39,12 +68,12 @@ export interface StreamHttpPlugin {
 
   /**
    * Add a listener for stream events
-   * @param eventName The event to listen for (chunk, end, or error)
+   * @param eventName The event to listen for
    * @param listenerFunc Callback function for the event
    * @returns Promise with remove function
    */
-  addListener(
-    eventName: 'chunk' | 'end' | 'error',
-    listenerFunc: (data: { id: string; chunk?: string; error?: string }) => void,
-  ): Promise<{ remove: () => void }>;
+  addListener<EventName extends keyof StreamHttpEventMap>(
+    eventName: EventName,
+    listenerFunc: (data: StreamHttpEventMap[EventName]) => void,
+  ): Promise<PluginListenerHandle>;
 }

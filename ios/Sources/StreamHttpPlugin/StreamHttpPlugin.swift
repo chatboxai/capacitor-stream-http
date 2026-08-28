@@ -1,5 +1,23 @@
-import Foundation
 import Capacitor
+import Foundation
+
+struct StreamResponseMetadata {
+  let status: Int
+  let headers: [String: String]
+
+  init(response: HTTPURLResponse) {
+    status = response.statusCode
+    headers = response.allHeaderFields.reduce(into: [:]) { result, header in
+      let name = String(describing: header.key).lowercased()
+      let value = String(describing: header.value)
+      if let existing = result[name] {
+        result[name] = "\(existing), \(value)"
+      } else {
+        result[name] = value
+      }
+    }
+  }
+}
 
 @objc(StreamHttpPlugin)
 public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate {
@@ -7,9 +25,9 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
   public let jsName = "StreamHttp"
   public let pluginMethods: [CAPPluginMethod] = [
     CAPPluginMethod(name: "startStream", returnType: CAPPluginReturnPromise),
-    CAPPluginMethod(name: "cancelStream", returnType: CAPPluginReturnPromise)
+    CAPPluginMethod(name: "cancelStream", returnType: CAPPluginReturnPromise),
   ]
-  
+
   private var sessions: [String: URLSession] = [:]
   private var tasks: [String: URLSessionDataTask] = [:]
 
@@ -54,13 +72,36 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
     call.resolve()
   }
 
-  public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+  public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data)
+  {
     guard let id = tasks.first(where: { $0.value == dataTask })?.key else { return }
     let chunk = String(data: data, encoding: .utf8) ?? ""
     notifyListeners("chunk", data: ["id": id, "chunk": chunk])
   }
 
-  public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+  public func urlSession(
+    _ session: URLSession,
+    dataTask: URLSessionDataTask,
+    didReceive response: URLResponse,
+    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+  ) {
+    guard
+      let id = tasks.first(where: { $0.value == dataTask })?.key,
+      let httpResponse = response as? HTTPURLResponse
+    else {
+      completionHandler(.cancel)
+      return
+    }
+
+    let metadata = StreamResponseMetadata(response: httpResponse)
+    notifyListeners(
+      "response", data: ["id": id, "status": metadata.status, "headers": metadata.headers])
+    completionHandler(.allow)
+  }
+
+  public func urlSession(
+    _ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?
+  ) {
     guard let id = tasks.first(where: { $0.value == task })?.key else { return }
     if let error = error {
       notifyListeners("error", data: ["id": id, "error": error.localizedDescription])

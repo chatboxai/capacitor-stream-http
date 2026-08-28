@@ -14,6 +14,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -106,6 +107,18 @@ public class StreamHttpPlugin extends Plugin {
                 Log.d(TAG, "Response code: " + responseCode);
 
                 if (request.isCancelled()) {
+                    return;
+                }
+
+                JSObject responseHeaders = new JSObject();
+                for (Map.Entry<String, String> header : HttpResponseHeaders.flatten(connection.getHeaderFields()).entrySet()) {
+                    responseHeaders.put(header.getKey(), header.getValue());
+                }
+                JSObject responseData = new JSObject();
+                responseData.put("id", streamId);
+                responseData.put("status", responseCode);
+                responseData.put("headers", responseHeaders);
+                if (!request.runIfActive(() -> notifyListeners("response", responseData))) {
                     return;
                 }
 
