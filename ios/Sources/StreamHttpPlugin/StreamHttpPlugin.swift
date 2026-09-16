@@ -1,5 +1,5 @@
-import Foundation
 import Capacitor
+import Foundation
 
 @objc(StreamHttpPlugin)
 public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate {
@@ -7,11 +7,10 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
   public let jsName = "StreamHttp"
   public let pluginMethods: [CAPPluginMethod] = [
     CAPPluginMethod(name: "startStream", returnType: CAPPluginReturnPromise),
-    CAPPluginMethod(name: "cancelStream", returnType: CAPPluginReturnPromise)
+    CAPPluginMethod(name: "cancelStream", returnType: CAPPluginReturnPromise),
   ]
-  
-  private var sessions: [String: URLSession] = [:]
-  private var tasks: [String: URLSessionDataTask] = [:]
+
+  let activeStreams = StreamTaskRegistry()
 
   @objc public func startStream(_ call: CAPPluginCall) {
     guard let urlString = call.getString("url"), let url = URL(string: urlString) else {
@@ -36,8 +35,7 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
     let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
     let task = session.dataTask(with: request)
     let id = UUID().uuidString
-    sessions[id] = session
-    tasks[id] = task
+    activeStreams.register(id: id, session: session, task: task)
     call.resolve(["id": id])
     task.resume()
   }
@@ -47,10 +45,10 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
       call.reject("Missing id")
       return
     }
-    tasks[id]?.cancel()
-    sessions[id]?.invalidateAndCancel()
-    tasks.removeValue(forKey: id)
-    sessions.removeValue(forKey: id)
+    if let removed = activeStreams.remove(id: id) {
+      removed.task.cancel()
+      removed.session.invalidateAndCancel()
+    }
     call.resolve()
   }
 
@@ -61,8 +59,9 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
     completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
   ) {
     defer { completionHandler(.allow) }
-    guard let id = tasks.first(where: { $0.value == dataTask })?.key,
-          let http = response as? HTTPURLResponse else { return }
+    guard let id = activeStreams.id(for: dataTask),
+      let http = response as? HTTPURLResponse
+    else { return }
     var headers: [String: String] = [:]
     for (name, value) in http.allHeaderFields {
       headers[String(describing: name).lowercased()] = String(describing: value)
@@ -70,20 +69,22 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
     notifyListeners("response", data: ["id": id, "status": http.statusCode, "headers": headers])
   }
 
-  public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-    guard let id = tasks.first(where: { $0.value == dataTask })?.key else { return }
+  public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data)
+  {
+    guard let id = activeStreams.id(for: dataTask) else { return }
     let chunk = String(data: data, encoding: .utf8) ?? ""
     notifyListeners("chunk", data: ["id": id, "chunk": chunk])
   }
 
-  public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-    guard let id = tasks.first(where: { $0.value == task })?.key else { return }
+  public func urlSession(
+    _ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?
+  ) {
+    guard let id = activeStreams.id(for: task) else { return }
     if let error = error {
       notifyListeners("error", data: ["id": id, "error": error.localizedDescription])
     } else {
       notifyListeners("end", data: ["id": id])
     }
-    tasks.removeValue(forKey: id)
-    sessions.removeValue(forKey: id)
+    activeStreams.remove(id: id)
   }
 }
