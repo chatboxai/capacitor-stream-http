@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-09-16
+
+### Added
+
+- `response` event, emitted once before the first `chunk`, carrying the HTTP status code and response headers (lowercase names). Consumers can now surface real status codes and read headers such as `mcp-session-id` instead of assuming 200.
+
 ## [0.1.1] - 2026-08-27
 
 ### Fixed
