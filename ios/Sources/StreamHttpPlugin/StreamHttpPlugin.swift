@@ -17,6 +17,11 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
       call.reject("Invalid URL")
       return
     }
+    let redirect = call.getString("redirect") ?? "follow"
+    guard ["follow", "error"].contains(redirect) else {
+      call.reject("redirect must be follow or error")
+      return
+    }
     let method = call.getString("method") ?? "GET"
     let headers = call.getObject("headers") as? [String: String] ?? [:]
     let body = call.getString("body")?.data(using: .utf8)
@@ -35,7 +40,7 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
     let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
     let task = session.dataTask(with: request)
     let id = UUID().uuidString
-    activeStreams.register(id: id, session: session, task: task)
+    activeStreams.register(id: id, session: session, task: task, redirect: redirect)
     call.resolve(["id": id])
     task.resume()
   }
@@ -71,20 +76,44 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
 
   public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data)
   {
-    guard let id = activeStreams.id(for: dataTask) else { return }
-    let chunk = String(data: data, encoding: .utf8) ?? ""
-    notifyListeners("chunk", data: ["id": id, "chunk": chunk])
+    guard let chunk = activeStreams.decode(for: dataTask, data: data), !chunk.text.isEmpty else {
+      return
+    }
+    notifyListeners("chunk", data: ["id": chunk.id, "chunk": chunk.text])
   }
 
   public func urlSession(
     _ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?
   ) {
-    guard let id = activeStreams.id(for: task) else { return }
+    guard let id = activeStreams.id(for: task), let entry = activeStreams.remove(id: id) else {
+      return
+    }
+    defer { entry.session.finishTasksAndInvalidate() }
     if let error = error {
       notifyListeners("error", data: ["id": id, "error": error.localizedDescription])
     } else {
+      let trailing = entry.decoder.decode(Data(), final: true)
+      if !trailing.isEmpty { notifyListeners("chunk", data: ["id": id, "chunk": trailing]) }
       notifyListeners("end", data: ["id": id])
     }
-    activeStreams.remove(id: id)
   }
+
+  public func urlSession(
+    _ session: URLSession, task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+    completionHandler: @escaping (URLRequest?) -> Void
+  ) {
+    guard let policy = activeStreams.redirect(for: task) else {
+      completionHandler(nil)
+      return
+    }
+    guard policy == "follow" else {
+      completionHandler(nil)
+      urlSession(session, task: task, didCompleteWithError: URLError(.httpTooManyRedirects))
+      task.cancel()
+      return
+    }
+    completionHandler(request)
+  }
+
 }

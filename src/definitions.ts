@@ -20,6 +20,8 @@ export interface StartStreamOptions {
    * Defaults to 90000. Set to 0 to disable the connect timeout.
    */
   connectTimeoutMillis?: number;
+  /** Redirect policy. Defaults to follow. error rejects before contacting the redirect target. */
+  redirect?: 'follow' | 'error';
 }
 
 export interface StreamResponseEvent {

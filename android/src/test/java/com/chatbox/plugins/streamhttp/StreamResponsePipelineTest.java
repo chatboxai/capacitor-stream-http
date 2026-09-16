@@ -3,6 +3,7 @@ package com.chatbox.plugins.streamhttp;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertThrows;
 
 import com.getcapacitor.JSObject;
 import java.io.ByteArrayInputStream;
@@ -91,6 +92,36 @@ public class StreamResponsePipelineTest {
         assertFalse(events.onChunk("bridge-id", "late"));
         assertFalse(events.onEnd("bridge-id"));
         assertEquals(List.of("response", "chunk", "end"), plugin.names);
+    }
+
+    @Test
+    public void preservesJsonSseLineEndingsAndUnterminatedEvents() throws Exception {
+        for (String text : List.of("{\n  \"text\": \"中文😀\"\n}", ": comment\r\nid: 7\r\nretry: 1000\r\ndata: one\r\ndata: two\r\n\r\ndata: unfinished")) {
+            RecordingEvents events = new RecordingEvents();
+            StreamResponsePipeline.consume("text", new TestHttpURLConnection(200, body(text), null), () -> false, events);
+            assertEquals(text, String.join("", events.chunks));
+        }
+    }
+
+    @Test
+    public void boundsLongLinesAndPreservesSurrogatePairs() throws Exception {
+        String text = "x".repeat(4095) + "😀" + "y".repeat(100_000);
+        RecordingEvents events = new RecordingEvents();
+        StreamResponsePipeline.consume("long", new TestHttpURLConnection(200, body(text), null), () -> false, events);
+        assertEquals(text, String.join("", events.chunks));
+        for (String chunk : events.chunks) {
+            assertTrue(chunk.length() <= 4097);
+            assertFalse(Character.isHighSurrogate(chunk.charAt(chunk.length() - 1)));
+        }
+    }
+
+    @Test
+    public void rejectsRedirectBeforeReadingBody() throws Exception {
+        TestHttpURLConnection connection = new TestHttpURLConnection(302, body("redirect"), null);
+        RecordingEvents events = new RecordingEvents();
+        assertThrows(IOException.class, () -> StreamResponsePipeline.consume("redirect", connection, () -> false, events, true));
+        assertEquals(0, connection.inputStreamReadCount);
+        assertTrue(events.names.isEmpty());
     }
 
     private static InputStream body(String value) {

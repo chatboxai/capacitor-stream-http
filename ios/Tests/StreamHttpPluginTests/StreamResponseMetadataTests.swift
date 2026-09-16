@@ -40,6 +40,42 @@ final class StreamResponseMetadataTests: XCTestCase {
     }
   }
 
+  func testEveryByteOfUnicodeReachesTheBridge() throws {
+    let plugin = RecordingStreamHttpPlugin()
+    let session = URLSession(configuration: .ephemeral)
+    let task = session.dataTask(with: try XCTUnwrap(URL(string: "https://example.com")))
+    plugin.activeStreams.register(id: "unicode", session: session, task: task)
+    for byte in "data: 中文😀\n\n".utf8 {
+      plugin.urlSession(session, dataTask: task, didReceive: Data([byte]))
+    }
+    plugin.urlSession(session, task: task, didCompleteWithError: nil)
+    XCTAssertEqual(
+      plugin.notifications.compactMap { $0.data["chunk"] as? String }.joined(), "data: 中文😀\n\n")
+    XCTAssertEqual(plugin.notifications.last?.name, "end")
+  }
+
+  func testRedirectPolicyRejectsBeforeForwardingTheRequest() throws {
+    for policy in ["follow", "error"] {
+      let plugin = RecordingStreamHttpPlugin()
+      let session = URLSession(configuration: .ephemeral)
+      defer { session.invalidateAndCancel() }
+      let url = try XCTUnwrap(URL(string: "https://example.com"))
+      let task = session.dataTask(with: url)
+      plugin.activeStreams.register(id: "redirect", session: session, task: task, redirect: policy)
+      let response = try XCTUnwrap(
+        HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil, headerFields: [:]))
+      let request = URLRequest(url: try XCTUnwrap(URL(string: "https://other.example.com")))
+      plugin.urlSession(
+        session, task: task, willPerformHTTPRedirection: response, newRequest: request
+      ) { forwarded in
+        XCTAssertEqual(forwarded?.url, policy == "follow" ? request.url : nil)
+      }
+      XCTAssertEqual(plugin.notifications.map(\.name), policy == "follow" ? [] : ["error"])
+      plugin.urlSession(session, task: task, didCompleteWithError: URLError(.cancelled))
+      XCTAssertEqual(plugin.notifications.count, 1)
+    }
+  }
+
   func testEmptyResponseEmitsMetadataAndEnd() throws {
     let plugin = RecordingStreamHttpPlugin()
     let session = URLSession(configuration: .ephemeral)

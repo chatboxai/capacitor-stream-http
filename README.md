@@ -11,6 +11,12 @@ Capacitor plugin for native HTTP streaming support on iOS and Android. This plug
 - ✅ Custom headers and request body
 - ✅ Works with proxied requests on mobile
 
+## Request policy
+
+Set `redirect: 'error'` to reject redirects before contacting their target. The default is `follow`.
+HTTP cookies use the platform cookie store; static authentication headers can be supplied explicitly.
+Text chunks preserve response content and may split SSE events. Consumers must parse the stream incrementally.
+
 ## Install
 
 ```bash

@@ -28,6 +28,11 @@ public class StreamHttpPlugin extends Plugin {
         String method = call.getString("method", "GET");
         JSObject headers = call.getObject("headers", new JSObject());
         String body = call.getString("body");
+        String redirect = call.getString("redirect", "follow");
+        if (!redirect.equals("follow") && !redirect.equals("error")) {
+            call.reject("redirect must be follow or error");
+            return;
+        }
 
         if (urlString == null) {
             call.reject("URL is required");
@@ -60,6 +65,8 @@ public class StreamHttpPlugin extends Plugin {
                 if (connection == null) {
                     return;
                 }
+
+                connection.setInstanceFollowRedirects(redirect.equals("follow"));
 
                 // Set request method
                 connection.setRequestMethod(method);
@@ -98,7 +105,7 @@ public class StreamHttpPlugin extends Plugin {
                     return;
                 }
 
-                StreamResponsePipeline.consume(streamId, connection, request::isCancelled, eventSink(request));
+                StreamResponsePipeline.consume(streamId, connection, request::isCancelled, eventSink(request), redirect.equals("error"));
             } catch (IOException e) {
                 if (request.isCancelled()) {
                     return;
