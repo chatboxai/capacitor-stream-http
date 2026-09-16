@@ -148,7 +148,7 @@ Cancels an active stream.
 ### Android
 
 - Uses `HttpURLConnection` with chunked streaming mode
-- SSE-aware parsing for proper event boundaries
+- Preserves streamed text; chunks may split SSE events and require incremental parsing
 - Thread-safe connection management
 
 ## License
