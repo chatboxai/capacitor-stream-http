@@ -109,6 +109,14 @@ public class StreamHttpPlugin extends Plugin {
                     return;
                 }
 
+                JSObject responseData = new JSObject();
+                responseData.put("id", streamId);
+                responseData.put("status", responseCode);
+                responseData.put("headers", ResponseHeaders.flatten(connection.getHeaderFields()));
+                if (!request.runIfActive(() -> notifyListeners("response", responseData))) {
+                    return;
+                }
+
                 // Read response stream
                 InputStream inputStream;
                 if (responseCode >= 200 && responseCode < 300) {

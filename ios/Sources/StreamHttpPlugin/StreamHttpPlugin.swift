@@ -54,6 +54,22 @@ public class StreamHttpPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelega
     call.resolve()
   }
 
+  public func urlSession(
+    _ session: URLSession,
+    dataTask: URLSessionDataTask,
+    didReceive response: URLResponse,
+    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+  ) {
+    defer { completionHandler(.allow) }
+    guard let id = tasks.first(where: { $0.value == dataTask })?.key,
+          let http = response as? HTTPURLResponse else { return }
+    var headers: [String: String] = [:]
+    for (name, value) in http.allHeaderFields {
+      headers[String(describing: name).lowercased()] = String(describing: value)
+    }
+    notifyListeners("response", data: ["id": id, "status": http.statusCode, "headers": headers])
+  }
+
   public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
     guard let id = tasks.first(where: { $0.value == dataTask })?.key else { return }
     let chunk = String(data: data, encoding: .utf8) ?? ""

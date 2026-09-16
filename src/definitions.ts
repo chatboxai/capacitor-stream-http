@@ -22,6 +22,28 @@ export interface StartStreamOptions {
   connectTimeoutMillis?: number;
 }
 
+export interface StreamResponseEvent {
+  id: string;
+  /** HTTP status code of the response. */
+  status: number;
+  /** Response headers with lowercase names. Repeated headers are joined with ", ". */
+  headers: Record<string, string>;
+}
+
+export interface StreamChunkEvent {
+  id: string;
+  chunk?: string;
+}
+
+export interface StreamEndEvent {
+  id: string;
+}
+
+export interface StreamErrorEvent {
+  id: string;
+  error?: string;
+}
+
 export interface StreamHttpPlugin {
   /**
    * Start a new HTTP stream request
@@ -38,13 +60,22 @@ export interface StreamHttpPlugin {
   cancelStream(options: { id: string }): Promise<void>;
 
   /**
-   * Add a listener for stream events
-   * @param eventName The event to listen for (chunk, end, or error)
+   * Add a listener for stream events.
+   *
+   * `response` fires once, before the first `chunk`, with the HTTP status and headers.
+   * @param eventName The event to listen for (response, chunk, end, or error)
    * @param listenerFunc Callback function for the event
    * @returns Promise with remove function
    */
   addListener(
+    eventName: 'response',
+    listenerFunc: (data: StreamResponseEvent) => void,
+  ): Promise<{ remove: () => void }>;
+  addListener(eventName: 'chunk', listenerFunc: (data: StreamChunkEvent) => void): Promise<{ remove: () => void }>;
+  addListener(eventName: 'end', listenerFunc: (data: StreamEndEvent) => void): Promise<{ remove: () => void }>;
+  addListener(eventName: 'error', listenerFunc: (data: StreamErrorEvent) => void): Promise<{ remove: () => void }>;
+  addListener(
     eventName: 'chunk' | 'end' | 'error',
-    listenerFunc: (data: { id: string; chunk?: string; error?: string }) => void,
+    listenerFunc: (data: StreamChunkEvent & StreamEndEvent & StreamErrorEvent) => void,
   ): Promise<{ remove: () => void }>;
 }

@@ -25,6 +25,11 @@ npx cap sync
 ```typescript
 import { StreamHttp } from 'capacitor-stream-http';
 
+// Listen for the response head (status + headers), fired once before the first chunk
+await StreamHttp.addListener('response', (data) => {
+  console.log('Status:', data.status, 'Session:', data.headers['mcp-session-id']);
+});
+
 // Listen for chunks
 await StreamHttp.addListener('chunk', (data) => {
   console.log('Received chunk:', data.chunk);
@@ -107,6 +112,10 @@ Cancels an active stream.
 
 ### Events
 
+- `response`: Fired once before the first `chunk`, when the response head arrives
+  - `id` (string): Stream ID
+  - `status` (number): HTTP status code
+  - `headers` (Record<string, string>): Response headers with lowercase names; repeated headers are joined with `, `
 - `chunk`: Fired when a data chunk is received
   - `id` (string): Stream ID
   - `chunk` (string): The data chunk
