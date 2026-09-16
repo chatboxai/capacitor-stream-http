@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-09-16
+
+### Fixed
+
+- Serialize iOS stream task registration, lookup and removal across plugin and URLSession queues.
+- Preserve response bodies for Android HTTP redirects that are not automatically followed.
+
 ## [0.2.0] - 2026-09-16
 
 ### Added
