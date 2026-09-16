@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] - 2026-09-16
+
+### Added
+
+- Optional `redirect: 'error'` policy on iOS and Android.
+
+### Fixed
+
+- Preserve UTF-8 characters split across iOS network reads.
+- Preserve Android response text and line endings with bounded chunk buffers.
+
 ## [0.2.1] - 2026-09-16
 
 ### Fixed

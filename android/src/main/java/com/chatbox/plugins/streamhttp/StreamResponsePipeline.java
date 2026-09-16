@@ -1,7 +1,6 @@
 package com.chatbox.plugins.streamhttp;
 
 import com.getcapacitor.JSObject;
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -24,7 +23,15 @@ final class StreamResponsePipeline {
     private StreamResponsePipeline() {}
 
     static void consume(String streamId, HttpURLConnection connection, Cancellation cancellation, EventSink events) throws IOException {
+        consume(streamId, connection, cancellation, events, false);
+    }
+
+    static void consume(String streamId, HttpURLConnection connection, Cancellation cancellation, EventSink events, boolean rejectRedirects)
+        throws IOException {
         int status = connection.getResponseCode();
+        if (rejectRedirects && (status == 301 || status == 302 || status == 303 || status == 307 || status == 308)) {
+            throw new IOException("HTTP redirect rejected; use the final server URL");
+        }
         if (cancellation.isCancelled()) {
             return;
         }
@@ -45,31 +52,22 @@ final class StreamResponsePipeline {
 
     private static boolean consumeBody(String streamId, InputStream inputStream, Cancellation cancellation, EventSink events)
         throws IOException {
-        SSEParser parser = new SSEParser();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "utf-8"))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (cancellation.isCancelled()) {
-                    return false;
+        try (InputStreamReader reader = new InputStreamReader(inputStream, "utf-8")) {
+            char[] buffer = new char[4096];
+            char pending = 0;
+            int count;
+            while ((count = reader.read(buffer)) != -1) {
+                if (cancellation.isCancelled()) return false;
+                String chunk = (pending == 0 ? "" : String.valueOf(pending)) + new String(buffer, 0, count);
+                pending = 0;
+                if (!chunk.isEmpty() && Character.isHighSurrogate(chunk.charAt(chunk.length() - 1))) {
+                    pending = chunk.charAt(chunk.length() - 1);
+                    chunk = chunk.substring(0, chunk.length() - 1);
                 }
-
-                String event = parser.processLine(line);
-                if (event != null && !events.onChunk(streamId, event)) {
-                    return false;
-                }
+                if (!chunk.isEmpty() && !events.onChunk(streamId, chunk)) return false;
             }
+            if (cancellation.isCancelled()) return false;
+            return pending == 0 || events.onChunk(streamId, "\uFFFD");
         }
-
-        if (cancellation.isCancelled()) {
-            return false;
-        }
-
-        String lastEvent = parser.processLine("");
-        if (lastEvent != null && !events.onChunk(streamId, lastEvent)) {
-            return false;
-        }
-
-        String remaining = parser.flush();
-        return remaining == null || remaining.isEmpty() || events.onChunk(streamId, remaining);
     }
 }
